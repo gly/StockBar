@@ -100,6 +100,22 @@ struct DropdownView: View {
         .padding(6)
         .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(WhiteFrostedBackground())
+        // 白色毛玻璃背景上必须用浅色配色，否则暗色模式下文字不可读
+        .environment(\.colorScheme, .light)
     }
+}
+
+/// 白色高斯模糊背景（NSVisualEffectView）
+struct WhiteFrostedBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground   // 采样窗口后方桌面，真模糊
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: .aqua)  // 强制浅色材质 → 白色磨砂
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
