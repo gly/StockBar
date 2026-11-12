@@ -100,23 +100,6 @@ struct DropdownView: View {
         .padding(6)
         .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)
-        .background(WhiteFrostedBackground())
-        // 白色毛玻璃背景上必须用浅色配色，否则暗色模式下文字不可读
-        .environment(\.colorScheme, .light)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
-}
-
-/// 白色高斯模糊背景（NSVisualEffectView）——系统弹窗材质，
-/// 浅色磨砂会透出桌面色调，与 SimToolbox 等面板同款效果
-struct WhiteFrostedBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .popover
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.appearance = NSAppearance(named: .aqua)  // 强制浅色材质
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {}
 }
