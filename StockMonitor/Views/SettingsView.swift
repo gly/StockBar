@@ -126,6 +126,7 @@ struct SettingsView: View {
                             LaunchAtLogin.setEnabled(enabled)
                             launchAtLogin = LaunchAtLogin.isEnabled
                         }
+                        .padding(.leading, 8)   // 与下方开关对齐
                 }
 
                 // 状态栏显示
