@@ -24,12 +24,99 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 0) {
+            tabBar
+            Divider()
+            if editingStock != nil {
+                ScrollView { inlineEditView(editingStock!) }
+                    .scrollIndicators(.never)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        switch tab {
+                        case .general: generalPane
+                        case .stocks:  stocksPane
+                        case .about:   aboutPane
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+                .scrollIndicators(.never)
+            }
+            Divider()
+            footerBar
+        }
+        .frame(width: 420, height: 620)
+    }
 
-                if let s = editingStock {
-                    inlineEditView(s)
-                } else {
+    // MARK: - Tab 页
+
+    private enum SettingsTab {
+        case general, stocks, about
+
+        var label: String {
+            switch self {
+            case .general: return "通用"
+            case .stocks:  return "股票"
+            case .about:   return "关于"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .general: return "gearshape"
+            case .stocks:  return "chart.line.uptrend.xyaxis"
+            case .about:   return "info.circle"
+            }
+        }
+    }
+
+    @State private var tab: SettingsTab = .general
+
+    @ViewBuilder private var tabBar: some View {
+        HStack(spacing: 28) {
+            tabButton(.general)
+            tabButton(.stocks)
+            tabButton(.about)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10)
+    }
+
+    private func tabButton(_ t: SettingsTab) -> some View {
+        let selected = tab == t
+        return Button { tab = t } label: {
+            VStack(spacing: 3) {
+                Image(systemName: t.icon).font(.system(size: 22, weight: .medium))
+                Text(t.label).font(.system(size: 11))
+            }
+            .foregroundColor(selected ? .accentColor : .secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(selected ? Color.accentColor.opacity(0.08) : Color.clear)
+            .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 底部固定栏：开发者 + 仓库地址
+    @ViewBuilder private var footerBar: some View {
+        HStack {
+            Text("开发者 leo")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            Spacer()
+            Link("github.com/gly/StockBar",
+                 destination: URL(string: "https://github.com/gly/StockBar")!)
+                .font(.system(size: 11))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    // MARK: - 通用 Tab
+
+    @ViewBuilder private var generalPane: some View {
                 // 状态栏显示
                 section("状态栏显示") {
                     Picker("", selection: Binding(
@@ -179,39 +266,11 @@ struct SettingsView: View {
                             launchAtLogin = LaunchAtLogin.isEnabled
                         }
                 }
+    } // end generalPane
 
-                // 关于 & 更新
-                section("关于") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Stockbar")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        Spacer()
-                        if updater.isBusy {
-                            HStack(spacing: 4) {
-                                ProgressView().scaleEffect(0.6)
-                                Text(updater.status)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else if !updater.status.isEmpty {
-                            Text(updater.status)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        } else {
-                            Button("检查更新") {
-                                updater.checkAndUpdate()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
-                    }
-                }
+    // MARK: - 股票 Tab
 
+    @ViewBuilder private var stocksPane: some View {
                 // 添加股票
                 section("添加股票") {
                     HStack {
@@ -262,13 +321,58 @@ struct SettingsView: View {
                         ForEach(sortedStocksForSettings) { s in stockRow(s) }
                     }
                 }
-                } // end else
+    } // end stocksPane
+
+    // MARK: - 关于 Tab
+
+    @ViewBuilder private var aboutPane: some View {
+        section("应用") {
+            HStack(spacing: 10) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 44, height: 44)
+                    .cornerRadius(8)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Stockbar")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-")")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                if updater.isBusy {
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.6)
+                        Text(updater.status)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else if !updater.status.isEmpty {
+                    Text(updater.status)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                } else {
+                    Button("检查更新") {
+                        updater.checkAndUpdate()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
         }
-        .scrollIndicators(.never)
-        .frame(width: 420, height: 620)
+
+        section("相关链接") {
+            VStack(alignment: .leading, spacing: 6) {
+                Link(destination: URL(string: "https://github.com/gly/StockBar")!) {
+                    Label("github.com/gly/StockBar", systemImage: "link")
+                        .font(.system(size: 12))
+                }
+                Link(destination: URL(string: "https://gitee.com/leoder/stock-bar")!) {
+                    Label("gitee.com/leoder/stock-bar", systemImage: "link")
+                        .font(.system(size: 12))
+                }
+            }
+        }
     }
     // MARK: - 排序辅助
 
