@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ToolbarView: View {
     @EnvironmentObject var appState: AppState
-    @Binding var showSettings: Bool
+    @Environment(\.openWindow) private var openWindow
     @Binding var sortByChange: Bool
 
     var body: some View {
@@ -26,7 +26,7 @@ struct ToolbarView: View {
 
             Spacer()
 
-            Button { showSettings = true } label: {
+            Button { openWindow(id: "settings") } label: {
                 Label("设置", systemImage: "gearshape").font(.system(size: 12))
             }
             .buttonStyle(.plain)

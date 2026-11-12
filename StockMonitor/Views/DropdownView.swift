@@ -76,26 +76,22 @@ struct DropdownView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if showSettings {
-                SettingsView(showSettings: $showSettings)
+            ProfitSummaryView()
+
+            if appState.stocks.isEmpty {
+                Text("暂无股票，点击设置添加")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+            } else if let stock = selectedStock {
+                StockChartView(stock: stock, onClose: { selectedStock = nil })
             } else {
-                ProfitSummaryView()
-
-                if appState.stocks.isEmpty {
-                    Text("暂无股票，点击设置添加")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                } else if let stock = selectedStock {
-                    StockChartView(stock: stock, onClose: { selectedStock = nil })
-                } else {
-                    stockListView
-                }
-
-                Divider()
-                ToolbarView(showSettings: $showSettings, sortByChange: $sortByChange)
+                stockListView
             }
+
+            Divider()
+            ToolbarView(sortByChange: $sortByChange)
         }
         .padding(6)
         .frame(width: 320)

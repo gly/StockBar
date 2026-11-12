@@ -35,5 +35,13 @@ struct StockbarApp: App {
                 .environmentObject(appState)
         }
         .menuBarExtraStyle(.window)
+
+        // 设置：独立窗口
+        Window("设置", id: "settings") {
+            SettingsView()
+                .environmentObject(appState)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
     }
 }

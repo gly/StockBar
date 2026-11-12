@@ -3,7 +3,7 @@ import SwiftUI
 @MainActor
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @Binding var showSettings: Bool
+    @Environment(\.dismiss) private var dismiss
 
     @ObservedObject private var updater = UpdateChecker.shared
 
@@ -31,9 +31,9 @@ struct SettingsView: View {
                 if let s = editingStock {
                     inlineEditView(s)
                 } else {
-                // 标题栏
+                // 标题栏（独立窗口：返回键改为关闭窗口）
                 HStack {
-                    Button { showSettings = false } label: {
+                    Button { dismiss() } label: {
                         Image(systemName: "chevron.left")
                     }.buttonStyle(.plain)
                     Text("设置").font(.headline)
@@ -278,9 +278,8 @@ struct SettingsView: View {
             .padding(8)
         }
         .scrollIndicators(.never)
-        // 高度与列表模式（ProfitSummary + stockListView maxHeight 520 + Toolbar 等）相当，
-        // 避免切换 list↔settings 时 NSPanel 大小不一致导致下方空白。
-        .frame(width: 284, height: 620)
+        // 独立窗口内容尺寸（窗口 scene 上也设置了 contentSize 约束）
+        .frame(width: 320, height: 620)
     }
 
     // MARK: - 排序辅助
