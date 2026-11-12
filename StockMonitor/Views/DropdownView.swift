@@ -106,14 +106,15 @@ struct DropdownView: View {
     }
 }
 
-/// 白色高斯模糊背景（NSVisualEffectView）
+/// 白色高斯模糊背景（NSVisualEffectView）——系统弹窗材质，
+/// 浅色磨砂会透出桌面色调，与 SimToolbox 等面板同款效果
 struct WhiteFrostedBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = NSVisualEffectView()
-        view.material = .underWindowBackground   // 采样窗口后方桌面，真模糊
+        view.material = .popover
         view.blendingMode = .behindWindow
         view.state = .active
-        view.appearance = NSAppearance(named: .aqua)  // 强制浅色材质 → 白色磨砂
+        view.appearance = NSAppearance(named: .aqua)  // 强制浅色材质
         return view
     }
 
