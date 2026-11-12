@@ -11,6 +11,8 @@ struct SettingsView: View {
     @State private var searchText    = ""
     @State private var searchResults = [SearchResult]()
     @State private var isSearching   = false
+    @State private var hasSearched   = false
+    @State private var searchError: String?
     @State private var editingStock: Stock?
     @State private var editCost      = ""
     @State private var editShares    = ""
@@ -235,6 +237,17 @@ struct SettingsView: View {
                                 .controlSize(.small)
                         }
                     }
+                    if let error = searchError, !isSearching {
+                        Text("⚠️ \(error)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if hasSearched && !isSearching && searchResults.isEmpty {
+                        Text("未找到匹配的股票，试试完整代码，如 sh000001 / hk00700 / 005930.ks")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if !searchResults.isEmpty {
                         VStack(spacing: 0) {
                             ForEach(searchResults) { r in
@@ -399,21 +412,21 @@ struct SettingsView: View {
 
     private func search() {
         guard !searchText.isEmpty else { return }
-        isSearching = true; searchResults = []
+        isSearching = true; hasSearched = true; searchError = nil; searchResults = []
         Task { await runSearch(searchText) }
     }
 
-    /// `op` 超过 `seconds` 秒未完成则放弃（返回 nil），底层请求会被取消。
+    /// `op` 超过 `seconds` 秒未完成则抛出超时错误，底层请求会被取消。
     /// 防止单个数据源连接挂起（如 QUIC/UDP 探测包被网络静默丢弃、TLS 握手无响应）拖死整个搜索。
     private nonisolated static func withTimeout<T: Sendable>(_ seconds: Double,
-                                                 _ op: @escaping @Sendable () async -> T) async -> T? {
-        await withTaskGroup(of: T?.self) { group in
-            group.addTask { await op() }
+                                                 _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await op() }
             group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-                return nil
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw URLError(.timedOut)
             }
-            let first = await group.next().flatMap { $0 }
+            let first = try await group.next()!
             group.cancelAll()
             return first
         }
@@ -421,23 +434,36 @@ struct SettingsView: View {
 
     /// 渐进式搜索：腾讯（A股/港股/美股）结果先到先显示，Yahoo 韩股随后合并。
     /// 每个来源限时 5 秒；全空时走新浪兜底 → 直接代码兜底。
+    /// 网络失败与“无结果”分开处理：全部失败且兜底也无结果时，展示报错提示。
     private func runSearch(_ keyword: String) async {
-        let tencent = await Self.withTimeout(5) { await Self.tencentSearch(keyword) } ?? []
         var seen = Set<String>()
         var merged: [SearchResult] = []
-        for r in tencent where !seen.contains(r.id) {
-            seen.insert(r.id)
-            merged.append(r)
+        var failure: String?
+
+        do {
+            let tencent = try await Self.withTimeout(5) { try await Self.tencentSearch(keyword) }
+            for r in tencent where !seen.contains(r.id) {
+                seen.insert(r.id)
+                merged.append(r)
+            }
+        } catch {
+            failure = Self.describe(error)
         }
         await MainActor.run {
-            if keyword == self.searchText { searchResults = merged; isSearching = false }
+            if keyword == self.searchText {
+                searchResults = merged; isSearching = false; searchError = nil
+            }
         }
 
         if Self.shouldQueryKorean(keyword) {
-            let korean = await Self.withTimeout(5) { await Self.yahooKoreanSearch(keyword) } ?? []
-            for r in korean where !seen.contains(r.id) {
-                seen.insert(r.id)
-                merged.append(r)
+            do {
+                let korean = try await Self.withTimeout(5) { try await Self.yahooKoreanSearch(keyword) }
+                for r in korean where !seen.contains(r.id) {
+                    seen.insert(r.id)
+                    merged.append(r)
+                }
+            } catch {
+                failure = failure ?? Self.describe(error)
             }
             await MainActor.run {
                 if keyword == self.searchText { searchResults = merged }
@@ -445,22 +471,46 @@ struct SettingsView: View {
         }
 
         guard merged.isEmpty else { return }
-        // 全空：新浪兜底（覆盖某些美股 ticker）→ 直接代码兜底
-        let sina = await Self.withTimeout(5) { await Self.sinaFetchSuggestions(keyword) } ?? []
-        let results = sina.isEmpty ? Self.directResult(for: keyword) : sina
+        // 全空：新浪兜底（覆盖指数、某些美股 ticker 等腾讯搜不到的品种）→ 直接代码兜底
+        var results: [SearchResult]
+        do {
+            let sina = try await Self.withTimeout(5) { try await Self.sinaFetchSuggestions(keyword) }
+            results = sina.isEmpty ? Self.directResult(for: keyword) : sina
+        } catch {
+            failure = failure ?? Self.describe(error)
+            results = Self.directResult(for: keyword)
+        }
         await MainActor.run {
-            if keyword == self.searchText { searchResults = results }
+            if keyword == self.searchText {
+                searchResults = results
+                // 有兜底结果就不算报错；一个结果都没有且来源失败 → 展示错误提示
+                searchError = results.isEmpty ? (failure ?? "") : nil
+            }
         }
     }
 
-    /// 腾讯搜索（A股/港股/美股），失败返回空。
-    private nonisolated static func tencentSearch(_ keyword: String) async -> [SearchResult] {
+    /// 把底层错误转成用户能看懂的简短提示
+    private nonisolated static func describe(_ error: Error) -> String {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:                 return "搜索超时（5 秒），请检查网络后重试"
+            case .notConnectedToInternet:   return "无网络连接"
+            case .cannotFindHost, .dnsLookupFailed: return "无法解析数据源域名，请检查 DNS/网络"
+            case .cancelled:                return "搜索已被取消"
+            default:                        return "网络错误（代码 \(urlError.code.rawValue)）"
+            }
+        }
+        return "搜索失败：\(error.localizedDescription)"
+    }
+
+    /// 腾讯搜索（A股/港股/美股）。网络失败抛错；接口正常但无匹配返回空数组。
+    private nonisolated static func tencentSearch(_ keyword: String) async throws -> [SearchResult] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://proxy.finance.qq.com/ifzqgtimg/appstock/smartbox/search/get?q=\(encoded)") else { return [] }
         var req = URLRequest(url: url)
         req.timeoutInterval = 5
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let (data, _) = try await URLSession.shared.data(for: req)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let dataObj = json["data"] as? [String: Any],
               let stocks = dataObj["stock"] as? [[String]] else {
             return []
@@ -498,8 +548,8 @@ struct SettingsView: View {
         return false
     }
 
-    /// Yahoo /v1/finance/search — 仅返回韩股（KSC / KOE 两种 exchange）
-    private nonisolated static func yahooKoreanSearch(_ keyword: String) async -> [SearchResult] {
+    /// Yahoo /v1/finance/search — 仅返回韩股（KSC / KOE 两种 exchange）。网络失败抛错。
+    private nonisolated static func yahooKoreanSearch(_ keyword: String) async throws -> [SearchResult] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://query1.finance.yahoo.com/v1/finance/search?q=\(encoded)&quotesCount=10") else {
             return []
@@ -507,8 +557,8 @@ struct SettingsView: View {
         var req = URLRequest(url: url)
         req.timeoutInterval = 5
         req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let (data, _) = try await URLSession.shared.data(for: req)
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let quotes = root["quotes"] as? [[String: Any]] else { return [] }
         return quotes.compactMap { q -> SearchResult? in
             guard (q["quoteType"] as? String) == "EQUITY",
@@ -522,17 +572,19 @@ struct SettingsView: View {
         }
     }
 
-    /// 新浪 suggest 兜底（主要覆盖美股/期货等腾讯接口不返回的品种）
-    private nonisolated static func sinaFetchSuggestions(_ keyword: String) async -> [SearchResult] {
+    /// 新浪 suggest 兜底（覆盖指数、美股/期货等腾讯接口搜不到的品种）。网络失败抛错。
+    ///
+    /// 响应格式：`var suggestvalue="名称,类型,代码,内部ID,名称,...";`
+    /// 示例：`sh000001,11,000001,sh000001,上证指数,,上证指数,99,1,,,,`
+    /// 类型：11/14=A股，12=港股，13=美股。类型在第 2 个字段（p[1]）。
+    private nonisolated static func sinaFetchSuggestions(_ keyword: String) async throws -> [SearchResult] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://suggest3.sinajs.cn/suggest/type=11,12,13,14&key=\(encoded)") else {
             return directResult(for: keyword)
         }
         var req = URLRequest(url: url)
         req.timeoutInterval = 5
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else {
-            return directResult(for: keyword)
-        }
+        let (data, _) = try await URLSession.shared.data(for: req)
         let body = StringDecoding.decodeGBK(data)
         guard let s = body.range(of: "\""),
               let e = body.lastIndex(of: "\""),
@@ -544,13 +596,13 @@ struct SettingsView: View {
                 let p = item.components(separatedBy: ",")
                 guard p.count >= 5 else { return nil }
                 let market: Market; let id: String
-                switch p[0] {
+                switch p[1] {
                 case "11", "14": market = .aStock;  id = p[3].lowercased()
                 case "12":       market = .hkStock; id = "hk" + p[3].lowercased()
                 case "13":       market = .usStock; id = p[3].lowercased()
                 default: return nil
                 }
-                return SearchResult(id: id, name: p[4], market: market)
+                return SearchResult(id: id, name: p[4].isEmpty ? p[0] : p[4], market: market)
             }
         return results.isEmpty ? directResult(for: keyword) : results
     }
@@ -595,5 +647,6 @@ struct SettingsView: View {
         appState.stocks.append(Stock(id: r.id, name: r.name, market: r.market,
                                      costPrice: nil, holdingShares: nil))
         searchText = ""; searchResults = []
+        hasSearched = false; searchError = nil
     }
 }
