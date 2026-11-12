@@ -3,7 +3,6 @@ import SwiftUI
 @MainActor
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
 
     @ObservedObject private var updater = UpdateChecker.shared
 
@@ -31,16 +30,6 @@ struct SettingsView: View {
                 if let s = editingStock {
                     inlineEditView(s)
                 } else {
-                // 标题栏（独立窗口：返回键改为关闭窗口）
-                HStack {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                    }.buttonStyle(.plain)
-                    Text("设置").font(.headline)
-                }
-
-                Divider()
-
                 // 状态栏显示
                 section("状态栏显示") {
                     Picker("", selection: Binding(
@@ -278,8 +267,7 @@ struct SettingsView: View {
             .padding(8)
         }
         .scrollIndicators(.never)
-        // 独立窗口内容尺寸（窗口 scene 上也设置了 contentSize 约束）
-        .frame(width: 320, height: 620)
+        .frame(width: 420, height: 620)
     }
 
     // MARK: - 排序辅助
