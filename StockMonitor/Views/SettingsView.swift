@@ -400,42 +400,66 @@ struct SettingsView: View {
     private func search() {
         guard !searchText.isEmpty else { return }
         isSearching = true; searchResults = []
-        Task {
-            let results = await fetchSuggestions(searchText)
-            await MainActor.run { searchResults = results; isSearching = false }
+        Task { await runSearch(searchText) }
+    }
+
+    /// `op` 超过 `seconds` 秒未完成则放弃（返回 nil），底层请求会被取消。
+    /// 防止单个数据源连接挂起（如 QUIC/UDP 探测包被网络静默丢弃、TLS 握手无响应）拖死整个搜索。
+    private nonisolated static func withTimeout<T: Sendable>(_ seconds: Double,
+                                                 _ op: @escaping @Sendable () async -> T) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await op() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next().flatMap { $0 }
+            group.cancelAll()
+            return first
         }
     }
 
-    /// 主搜索：腾讯（A股/港股/美股）和 Yahoo（韩股）并行，结果合并。
-    /// 用户输入 6 位数字 / 英文 / 韩文 时，A股 和 同号韩股 会同时显示。
-    private func fetchSuggestions(_ keyword: String) async -> [SearchResult] {
-        async let tencent = tencentSearch(keyword)
-        async let korean  = shouldQueryKorean(keyword)
-                            ? yahooKoreanSearch(keyword)
-                            : [SearchResult]()
-        let (t, k) = await (tencent, korean)
-
-        // 合并：先腾讯结果（保持原有排序），再 Yahoo 韩股结果，去重
+    /// 渐进式搜索：腾讯（A股/港股/美股）结果先到先显示，Yahoo 韩股随后合并。
+    /// 每个来源限时 5 秒；全空时走新浪兜底 → 直接代码兜底。
+    private func runSearch(_ keyword: String) async {
+        let tencent = await Self.withTimeout(5) { await Self.tencentSearch(keyword) } ?? []
         var seen = Set<String>()
         var merged: [SearchResult] = []
-        for r in t + k where !seen.contains(r.id) {
+        for r in tencent where !seen.contains(r.id) {
             seen.insert(r.id)
             merged.append(r)
         }
-
-        if merged.isEmpty {
-            // 全空：新浪兜底（覆盖某些美股 ticker）→ 直接代码兜底
-            let sina = await sinaFetchSuggestions(keyword)
-            return sina.isEmpty ? directResult(for: keyword) : sina
+        await MainActor.run {
+            if keyword == self.searchText { searchResults = merged; isSearching = false }
         }
-        return merged
+
+        if Self.shouldQueryKorean(keyword) {
+            let korean = await Self.withTimeout(5) { await Self.yahooKoreanSearch(keyword) } ?? []
+            for r in korean where !seen.contains(r.id) {
+                seen.insert(r.id)
+                merged.append(r)
+            }
+            await MainActor.run {
+                if keyword == self.searchText { searchResults = merged }
+            }
+        }
+
+        guard merged.isEmpty else { return }
+        // 全空：新浪兜底（覆盖某些美股 ticker）→ 直接代码兜底
+        let sina = await Self.withTimeout(5) { await Self.sinaFetchSuggestions(keyword) } ?? []
+        let results = sina.isEmpty ? Self.directResult(for: keyword) : sina
+        await MainActor.run {
+            if keyword == self.searchText { searchResults = results }
+        }
     }
 
     /// 腾讯搜索（A股/港股/美股），失败返回空。
-    private func tencentSearch(_ keyword: String) async -> [SearchResult] {
+    private nonisolated static func tencentSearch(_ keyword: String) async -> [SearchResult] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://proxy.finance.qq.com/ifzqgtimg/appstock/smartbox/search/get?q=\(encoded)"),
-              let (data, _) = try? await URLSession.shared.data(from: url),
+              let url = URL(string: "https://proxy.finance.qq.com/ifzqgtimg/appstock/smartbox/search/get?q=\(encoded)") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 5
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let dataObj = json["data"] as? [String: Any],
               let stocks = dataObj["stock"] as? [[String]] else {
@@ -463,7 +487,7 @@ struct SettingsView: View {
     /// - 6 位纯数字（韩股代码长度）→ 一定（即便腾讯能搜到 A 股，同号韩股也想看到）
     /// - 纯字母长度 ≥ 3 → 一定（公司名）
     /// 其它（短数字、特殊字符）跳过 Yahoo，省一次请求
-    private func shouldQueryKorean(_ s: String) -> Bool {
+    private nonisolated static func shouldQueryKorean(_ s: String) -> Bool {
         let k = s.trimmingCharacters(in: .whitespaces)
         let lower = k.lowercased()
         if lower.hasSuffix(".ks") || lower.hasSuffix(".kq") { return true }
@@ -475,12 +499,13 @@ struct SettingsView: View {
     }
 
     /// Yahoo /v1/finance/search — 仅返回韩股（KSC / KOE 两种 exchange）
-    private func yahooKoreanSearch(_ keyword: String) async -> [SearchResult] {
+    private nonisolated static func yahooKoreanSearch(_ keyword: String) async -> [SearchResult] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
               let url = URL(string: "https://query1.finance.yahoo.com/v1/finance/search?q=\(encoded)&quotesCount=10") else {
             return []
         }
         var req = URLRequest(url: url)
+        req.timeoutInterval = 5
         req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -498,10 +523,14 @@ struct SettingsView: View {
     }
 
     /// 新浪 suggest 兜底（主要覆盖美股/期货等腾讯接口不返回的品种）
-    private func sinaFetchSuggestions(_ keyword: String) async -> [SearchResult] {
+    private nonisolated static func sinaFetchSuggestions(_ keyword: String) async -> [SearchResult] {
         guard let encoded = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://suggest3.sinajs.cn/suggest/type=11,12,13,14&key=\(encoded)"),
-              let (data, _) = try? await URLSession.shared.data(from: url) else {
+              let url = URL(string: "https://suggest3.sinajs.cn/suggest/type=11,12,13,14&key=\(encoded)") else {
+            return directResult(for: keyword)
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 5
+        guard let (data, _) = try? await URLSession.shared.data(for: req) else {
             return directResult(for: keyword)
         }
         let body = StringDecoding.decodeGBK(data)
@@ -527,7 +556,7 @@ struct SettingsView: View {
     }
 
     /// 将纯数字/字母输入当作直接代码（兜底）：6位数→sh，其余→sz
-    private func directResult(for keyword: String) -> [SearchResult] {
+    private nonisolated static func directResult(for keyword: String) -> [SearchResult] {
         let k = keyword.lowercased().trimmingCharacters(in: .whitespaces)
         guard !k.isEmpty else { return [] }
         // 已有前缀（sh/sz/bj/hk/usr_）直接使用

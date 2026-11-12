@@ -4,7 +4,7 @@ import CoreFoundation
 enum StringDecoding {
 
     /// 将 GBK/GB18030 编码的 Data 解码为 Swift String
-    static func decodeGBK(_ data: Data) -> String {
+    nonisolated static func decodeGBK(_ data: Data) -> String {
         guard !data.isEmpty else { return "" }
         if let enc = String.Encoding.gb18030,
            let s = String(data: data, encoding: enc) { return s }
