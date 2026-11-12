@@ -93,6 +93,10 @@ struct DropdownView: View {
             Divider()
             ToolbarView(sortByChange: $sortByChange)
         }
+        .onAppear {
+            // 预热设置窗口：面板首次出现时就构建好，点击“设置”瞬时打开
+            SettingsWindowController.shared.prewarm(appState: appState)
+        }
         .padding(6)
         .frame(width: 320)
         .fixedSize(horizontal: false, vertical: true)

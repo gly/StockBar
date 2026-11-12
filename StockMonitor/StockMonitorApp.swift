@@ -35,12 +35,5 @@ struct StockbarApp: App {
                 .environmentObject(appState)
         }
         .menuBarExtraStyle(.window)
-
-        // 设置：独立窗口（系统标题栏带关闭按钮）
-        Window("设置", id: "settings") {
-            SettingsView()
-                .environmentObject(appState)
-        }
-        .windowResizability(.contentSize)
     }
 }

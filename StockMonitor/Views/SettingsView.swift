@@ -264,12 +264,12 @@ struct SettingsView: View {
                 }
                 } // end else
             }
-            .padding(8)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
         .scrollIndicators(.never)
         .frame(width: 420, height: 620)
     }
-
     // MARK: - 排序辅助
 
     /// 设置页"我的股票"排序：有持仓（成本 + 股数都设置了）的排在前面，
