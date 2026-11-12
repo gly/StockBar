@@ -90,11 +90,13 @@ struct SettingsView: View {
                 Image(systemName: t.icon).font(.system(size: 22, weight: .medium))
                 Text(t.label).font(.system(size: 11))
             }
+            .frame(minWidth: 72, minHeight: 52)
             .foregroundColor(selected ? .accentColor : .secondary)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(selected ? Color.accentColor.opacity(0.08) : Color.clear)
             .cornerRadius(8)
+            .contentShape(Rectangle())   // 整个区域都可点击，扩大热区
         }
         .buttonStyle(.plain)
     }
@@ -117,6 +119,15 @@ struct SettingsView: View {
     // MARK: - 通用 Tab
 
     @ViewBuilder private var generalPane: some View {
+                // 开机启动
+                section("开机启动") {
+                    Toggle("登录后自动启动", isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { enabled in
+                            LaunchAtLogin.setEnabled(enabled)
+                            launchAtLogin = LaunchAtLogin.isEnabled
+                        }
+                }
+
                 // 状态栏显示
                 section("状态栏显示") {
                     Picker("", selection: Binding(
@@ -256,15 +267,6 @@ struct SettingsView: View {
                 // 到价提醒：通知权限 + 测试
                 section("到价提醒") {
                     PriceAlertPermissionRow()
-                }
-
-                // 开机启动
-                section("开机启动") {
-                    Toggle("登录后自动启动", isOn: $launchAtLogin)
-                        .onChange(of: launchAtLogin) { enabled in
-                            LaunchAtLogin.setEnabled(enabled)
-                            launchAtLogin = LaunchAtLogin.isEnabled
-                        }
                 }
     } // end generalPane
 
