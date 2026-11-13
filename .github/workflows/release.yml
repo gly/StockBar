@@ -9,12 +9,11 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  test:
     # runs-on 取最新可用，setup-xcode 选 latest-stable，尽量接近本地 SDK。
     # SwiftUI（特别是 MenuBarExtra panel）在不同 SDK 下行为不一致 ——
     # CI 用旧 SDK 编译会导致用户实际使用时 UI 异常（如 v1.3.4 设置页空白）。
     runs-on: macos-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,7 +38,23 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Build Universal Binary
+  build:
+    needs: test
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode (latest-stable)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build (${{ matrix.arch }})
         run: |
           MARKETING_VERSION="${GITHUB_REF_NAME#v}"
           xcodebuild \
@@ -47,7 +62,7 @@ jobs:
             -scheme Stockbar \
             -configuration Release \
             -derivedDataPath build \
-            ARCHS="arm64 x86_64" \
+            ARCHS="${{ matrix.arch }}" \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
@@ -59,6 +74,12 @@ jobs:
         run: |
           APP_PATH=$(find build -name "Stockbar.app" -maxdepth 6 | head -1)
           echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Verify architecture
+        run: |
+          APP_PATH="${{ steps.locate.outputs.app_path }}"
+          lipo -info "$APP_PATH/Contents/MacOS/Stockbar" | grep -q "${{ matrix.arch }}"
+          lipo -info "$APP_PATH/Contents/MacOS/Stockbar"
 
       - name: Ad-hoc sign (required for notifications)
         run: |
@@ -72,14 +93,14 @@ jobs:
         run: |
           APP_PATH="${{ steps.locate.outputs.app_path }}"
           VERSION="${GITHUB_REF_NAME}"
-          DMG_NAME="Stockbar-${VERSION}.dmg"
+          DMG_NAME="Stockbar-${VERSION}-${{ matrix.arch }}.dmg"
 
           mkdir -p dmg_staging
           cp -R "$APP_PATH" dmg_staging/
           ln -s /Applications dmg_staging/Applications
 
           hdiutil create \
-            -volname "Stockbar ${VERSION}" \
+            -volname "Stockbar ${VERSION} (${{ matrix.arch }})" \
             -srcfolder dmg_staging \
             -ov \
             -format UDZO \
@@ -90,7 +111,7 @@ jobs:
       - name: Upload Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Stockbar-*.dmg
+          files: Stockbar-*-${{ matrix.arch }}.dmg
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
